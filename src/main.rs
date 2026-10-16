@@ -5,6 +5,8 @@ use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, BorrowedFd};
 use std::{thread, time::Duration};
 
+mod dial;
+
 struct Card(File);
 impl AsFd for Card {
     fn as_fd(&self) -> BorrowedFd<'_> {
@@ -15,6 +17,7 @@ impl Device for Card {}
 impl ControlDevice for Card {}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dial::spawn();
     let path = std::env::args().nth(1).unwrap_or("/dev/dri/card1".into());
     let card = Card(OpenOptions::new().read(true).write(true).open(&path)?);
 
