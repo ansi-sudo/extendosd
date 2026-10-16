@@ -28,7 +28,6 @@ fn key_action(code: u16) -> Option<u8> {
         5 => Some(MUTE),       // button 4
         28 => Some(PLAY_PAUSE), // dial press
         50 => Some(STOP),      // rightmost top button (KEY_M)
-        1 => Some(PLAY),       // button under the dial (KEY_ESC)
         _ => None,
     }
 }
@@ -54,7 +53,7 @@ fn tap(hid: &mut File, bit: u8) -> io::Result<()> {
     hid.write_all(&[0])
 }
 
-fn on_rotary(hid: &mut File, typ: u16, code: u16, value: i32) -> io::Result<()> {
+fn on_rotary(hid: &mut File, _kbd: &mut File, typ: u16, code: u16, value: i32) -> io::Result<()> {
     if typ != EV_REL || code != REL_HWHEEL || value == 0 {
         return Ok(());
     }
@@ -65,15 +64,20 @@ fn on_rotary(hid: &mut File, typ: u16, code: u16, value: i32) -> io::Result<()> 
     Ok(())
 }
 
-fn on_buttons(hid: &mut File, typ: u16, code: u16, value: i32) -> io::Result<()> {
+fn on_buttons(hid: &mut File, kbd: &mut File, typ: u16, code: u16, value: i32) -> io::Result<()> {
     if typ != EV_KEY || value == 2 {
         return Ok(());
+    }
+    if code == 1 {
+        // KEY_ESC button -> keyboard 'k' (HID usage 0x0E)
+        let k = if value == 1 { 0x0E } else { 0 };
+        return kbd.write_all(&[0, 0, k, 0, 0, 0, 0, 0]);
     }
     let Some(bit) = key_action(code) else { return Ok(()) };
     hid.write_all(&[if value == 1 { bit } else { 0 }])
 }
 
-type Handler = fn(&mut File, u16, u16, i32) -> io::Result<()>;
+type Handler = fn(&mut File, &mut File, u16, u16, i32) -> io::Result<()>;
 
 fn run(name: &'static str, handler: Handler) {
     loop {
@@ -89,6 +93,10 @@ fn run(name: &'static str, handler: Handler) {
             thread::sleep(Duration::from_secs(1));
             continue;
         };
+        let Ok(mut kbd) = OpenOptions::new().write(true).open("/dev/hidg1") else {
+            thread::sleep(Duration::from_secs(1));
+            continue;
+        };
         eprintln!("input: {name} ({path}) -> /dev/hidg0");
 
         // 64-bit struct input_event: i64 sec, i64 usec, u16 type, u16 code, i32 value
@@ -97,7 +105,7 @@ fn run(name: &'static str, handler: Handler) {
             let typ = u16::from_ne_bytes([buf[16], buf[17]]);
             let code = u16::from_ne_bytes([buf[18], buf[19]]);
             let value = i32::from_ne_bytes([buf[20], buf[21], buf[22], buf[23]]);
-            if handler(&mut hid, typ, code, value).is_err() {
+            if handler(&mut hid, &mut kbd, typ, code, value).is_err() {
                 break;
             }
         }
